@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+.env
+*.joblib
+models/*.joblib
+data/raw/
+data/processed/
+data/synthetic/
+.ipynb_checkpoints/
+.DS_Store
