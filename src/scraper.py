@@ -35,6 +35,13 @@ def _get(url: str, client: Optional[httpx.Client] = None) -> BeautifulSoup:
         resp = client.get(url, headers=HEADERS, timeout=30, follow_redirects=True)
     else:
         resp = httpx.get(url, headers=HEADERS, timeout=30, follow_redirects=True)
+    if resp.status_code == 403:
+        raise PermissionError(
+            "RacingPost blocked the request (403). "
+            "Try again later or check your IP is not rate-limited."
+        )
+    if resp.status_code == 401:
+        raise PermissionError("RacingPost requires a login to access this page.")
     resp.raise_for_status()
     return BeautifulSoup(resp.text, "lxml")
 
@@ -57,32 +64,58 @@ def scrape_time_order() -> pd.DataFrame:
     url = f"{BASE_URI}/racecards/time-order"
     soup = _get(url)
 
-    items = soup.select(".RC-meetingItem__link")
+    # Try multiple selector patterns — RacingPost has changed class names over time
+    items = (
+        soup.select(".RC-meetingItem__link") or
+        soup.select("a[data-race-id]") or
+        soup.select(".rp-timeView__timePanel a[href*='/racecards/']") or
+        soup.select("a[href*='/racecards/'][href*='-']")
+    )
 
     records = []
     for item in items:
-        race_id = item.get("data-race-id", "")
-        racecourse = item.get("data-racecourse", "")
-        race_date = item.get("data-race-date", "")
-        race_time = item.get("data-race-time", "")
+        race_id = (
+            item.get("data-race-id") or
+            item.get("data-analytics-race-id") or
+            ""
+        )
+        racecourse = (
+            item.get("data-racecourse") or
+            item.get("data-analytics-coursename") or
+            item.get_text(strip=True)[:30] or
+            ""
+        )
+        race_date = item.get("data-race-date") or item.get("data-analytics-race-date") or ""
+        race_time = item.get("data-race-time") or item.get("data-analytics-race-time") or ""
         href = item.get("href", "")
-        meeting_url = f"{BASE_URI}{href}" if href else ""
+        meeting_url = f"{BASE_URI}{href}" if href and not href.startswith("http") else href
 
-        num_el = item.select_one(".RC-meetingItem__numberOfRunners")
+        # Extract race_id from URL if not in attributes (e.g. /racecards/2024-05-22/ascot/123456)
+        if not race_id and "/racecards/" in href:
+            parts = href.rstrip("/").split("/")
+            if parts:
+                race_id = parts[-1]
+
+        num_el = item.select_one(".RC-meetingItem__numberOfRunners, .rp-timeView__runners")
         num_runners = num_el.get_text(strip=True) if num_el else ""
 
-        records.append({
-            "race_id": race_id,
-            "racecourse": racecourse,
-            "race_date": race_date,
-            "race_time": race_time,
-            "num_runners": num_runners,
-            "meeting_url": meeting_url,
-        })
+        if meeting_url:
+            records.append({
+                "race_id": race_id,
+                "racecourse": racecourse,
+                "race_date": race_date,
+                "race_time": race_time,
+                "num_runners": num_runners,
+                "meeting_url": meeting_url,
+            })
+
+    if not records:
+        logger.warning("No races found on time-order page. Page structure may have changed.")
+        return pd.DataFrame(columns=["race_id", "racecourse", "race_date", "race_time", "num_runners", "meeting_url"])
 
     df = pd.DataFrame(records)
-    # Drop rows without a race_id or URL
-    df = df[df["race_id"].str.strip().astype(bool) & df["meeting_url"].str.strip().astype(bool)]
+    # Drop rows without a URL
+    df = df[df["meeting_url"].str.strip().astype(bool)]
     df = df.reset_index(drop=True)
     logger.info(f"Found {len(df)} races in time order.")
     return df

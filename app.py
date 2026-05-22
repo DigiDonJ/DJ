@@ -76,8 +76,11 @@ with st.sidebar:
                 df = scrape_all_races_today(progress_callback=progress_cb)
                 prog_placeholder.empty()
 
-                if df.empty:
-                    st.session_state["scrape_error"] = "No races found for today."
+                if df.empty or "race_id" not in df.columns:
+                    st.session_state["scrape_error"] = (
+                        "No races found for today. RacingPost may have updated their page "
+                        "structure, or there are no races scheduled."
+                    )
                 else:
                     st.session_state["racecard_df"] = df
                     st.session_state["flag_picks"] = get_top_picks(df, n=3)
