@@ -5,7 +5,9 @@ Extracts data from the __NEXT_DATA__ JSON embedded in each page (Next.js),
 with a CSS/HTML fallback. Filters time-order URLs to valid race card patterns only.
 """
 
+import csv
 import json
+import os
 import re
 import time
 import logging
@@ -26,6 +28,56 @@ RACE_URL_RE = re.compile(r"/racecards/\d+/[^/]+/\d{4}-\d{2}-\d{2}/\d+")
 
 TODAY = date.today().strftime("%Y-%m-%d")
 TODAY_RACE_URL_RE = re.compile(rf"/racecards/\d+/[^/]+/{re.escape(TODAY)}/\d+")
+
+# UK countries we want to include (Ireland and France are excluded)
+_UK_COUNTRIES = {"ENGLAND", "SCOTLAND", "WALES"}
+
+# Derived from data/Coursecountry.csv at import time
+_UK_COURSE_NAMES: set  # upper-cased course names, e.g. "GOODWOOD"
+_UK_COURSE_SLUGS: set  # URL slugs, e.g. "chelmsford-city"
+
+
+def _load_uk_courses() -> tuple:
+    """Load UK course names and URL slugs from data/Coursecountry.csv."""
+    names: set = set()
+    slugs: set = set()
+    cc_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "data", "Coursecountry.csv",
+    )
+    if not os.path.exists(cc_path):
+        return names, slugs
+    try:
+        with open(cc_path, newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                country = row.get("Country", "").strip().upper()
+                course = row.get("racecourse", "").strip()
+                if country in _UK_COUNTRIES and course:
+                    names.add(course.upper())
+                    slugs.add(course.lower().replace(" ", "-"))
+    except Exception as exc:
+        logging.getLogger(__name__).warning(f"Could not load Coursecountry.csv: {exc}")
+    return names, slugs
+
+
+_UK_COURSE_NAMES, _UK_COURSE_SLUGS = _load_uk_courses()
+
+
+def _is_uk_course(racecourse: str, meeting_url: str = "") -> bool:
+    """Return True if the course is in England, Scotland, or Wales."""
+    if not _UK_COURSE_NAMES:
+        return True  # CSV not available — don't filter
+    if racecourse and racecourse.strip().upper() in _UK_COURSE_NAMES:
+        return True
+    # Derive slug from URL: /racecards/{id}/{slug}/{date}/{race_id}/
+    if meeting_url:
+        parts = meeting_url.rstrip("/").split("/")
+        if len(parts) >= 4:
+            url_slug = parts[-3]
+            if url_slug in _UK_COURSE_SLUGS:
+                return True
+    return False
+
 
 HEADERS = {
     "User-Agent": (
@@ -535,6 +587,20 @@ def scrape_time_order() -> pd.DataFrame:
     if not records:
         logger.warning("No races found on time-order page.")
         return pd.DataFrame(columns=["race_id", "racecourse", "race_date", "race_time", "num_runners", "meeting_url"])
+
+    # Filter to UK courses (England, Scotland, Wales)
+    uk_records = [
+        r for r in records
+        if _is_uk_course(r.get("racecourse", ""), r.get("meeting_url", ""))
+    ]
+    if uk_records:
+        logger.info(f"UK filter: keeping {len(uk_records)}/{len(records)} races (England/Scotland/Wales).")
+        records = uk_records
+    else:
+        logger.warning(
+            f"UK filter matched 0 of {len(records)} races — coursecountry lookup may be incomplete. "
+            "Returning all races."
+        )
 
     df = pd.DataFrame(records).drop_duplicates("meeting_url").reset_index(drop=True)
     logger.info(f"Found {len(df)} races in time order.")
