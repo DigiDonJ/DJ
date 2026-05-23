@@ -161,6 +161,47 @@ def main():
         log(f"  Body text length: {len(text)} chars")
         log(f"  First 500 chars: {text[:500]}")
 
+    # 8. Try the new scraper directly
+    log("\n=== 8. New scraper test ===")
+    try:
+        import sys
+        sys.path.insert(0, ".")
+        from src.scraper import _extract_next_data, _parse_race_from_next_data, _parse_race_from_html
+        data = _extract_next_data(resp.text)
+        if data:
+            df = _parse_race_from_next_data(data, URL)
+            log(f"  JSON parser: {len(df)} horses")
+            if not df.empty:
+                log(f"  Columns: {list(df.columns)}")
+                log(f"  First horse: {df.iloc[0].to_dict()}")
+        else:
+            log("  No __NEXT_DATA__")
+        df2 = _parse_race_from_html(soup, URL)
+        log(f"  HTML parser: {len(df2)} horses")
+        if not df2.empty:
+            log(f"  First horse: {df2.iloc[0].to_dict()}")
+    except Exception as e:
+        log(f"  Error: {e}")
+        import traceback
+        log(traceback.format_exc())
+
+    # 9. If JSON parser failed, dump initialState structure
+    if data:
+        log("\n=== 9. initialState structure ===")
+        try:
+            props = data.get("props", {}).get("pageProps", {})
+            initial_state = props.get("initialState", {})
+            if isinstance(initial_state, dict):
+                log(f"  initialState top keys: {list(initial_state.keys())}")
+                for k, v in list(initial_state.items())[:5]:
+                    log(f"    {k}: {type(v).__name__} {'(empty)' if not v else ''}")
+                    if isinstance(v, dict):
+                        log(f"      sub-keys: {list(v.keys())[:15]}")
+                    elif isinstance(v, list) and v:
+                        log(f"      list len={len(v)}, first item keys: {list(v[0].keys())[:15] if isinstance(v[0], dict) else type(v[0]).__name__}")
+        except Exception as e:
+            log(f"  Error: {e}")
+
     # Save analysis
     with open("diagnose_output.txt", "w", encoding="utf-8") as f:
         f.write("\n".join(out))

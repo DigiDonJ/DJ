@@ -82,92 +82,187 @@ def _extract_next_data(raw_html: str) -> Optional[dict]:
         return None
 
 
+def _is_runner_dict(obj: dict) -> bool:
+    """
+    Heuristic: True if this dict looks like a horse/runner entry.
+    Runner dicts typically contain horse name + at least one of: jockey, draw, weight, age.
+    """
+    if not isinstance(obj, dict):
+        return False
+    name_keys = {"horseName", "name", "horse"}
+    sig_keys = {
+        "jockeyName", "jockey", "trainerName", "trainer",
+        "draw", "saddleClothNo", "clothNumber", "number",
+        "weight", "weightValue", "weightCarried",
+        "age", "horseAge",
+        "or", "OR", "officialRating",
+        "rpr", "RPR", "topSpeed", "ts", "TS",
+        "form", "lastRun", "daysSinceLastRun",
+    }
+    has_name = any(k in obj for k in name_keys)
+    has_sig = any(k in obj for k in sig_keys)
+    return has_name and has_sig
+
+
+def _find_runners(node, path=""):
+    """
+    Recursively walk JSON looking for lists of runner-like dicts.
+    Returns the first plausible list found (largest preferred).
+    """
+    candidates = []
+
+    def walk(n, p):
+        if isinstance(n, list) and n:
+            if all(isinstance(x, dict) for x in n) and len(n) >= 2:
+                # Count how many entries look runner-like
+                runner_count = sum(_is_runner_dict(x) for x in n)
+                if runner_count >= max(2, len(n) // 2):
+                    candidates.append((len(n), p, n))
+            for i, item in enumerate(n):
+                walk(item, f"{p}[{i}]")
+        elif isinstance(n, dict):
+            for k, v in n.items():
+                walk(v, f"{p}.{k}" if p else k)
+
+    walk(node, path)
+    if not candidates:
+        return None, ""
+    # Prefer the largest candidate (most likely to be the runners list)
+    candidates.sort(key=lambda x: -x[0])
+    return candidates[0][2], candidates[0][1]
+
+
+def _find_value(node, keys, max_depth=10):
+    """Recursively search for the first non-empty value with one of the given keys."""
+    if max_depth <= 0:
+        return None
+    if isinstance(node, dict):
+        for k in keys:
+            v = node.get(k)
+            if v not in (None, "", []):
+                return v
+        for v in node.values():
+            result = _find_value(v, keys, max_depth - 1)
+            if result not in (None, "", []):
+                return result
+    elif isinstance(node, list):
+        for item in node:
+            result = _find_value(item, keys, max_depth - 1)
+            if result not in (None, "", []):
+                return result
+    return None
+
+
+def _runner_field(runner: dict, keys: list, nested_keys: dict = None):
+    """
+    Get a field from a runner dict, trying multiple key names + nested paths.
+    nested_keys = {'horse': ['name', 'horseName'], 'ratings': ['or']}
+    """
+    for k in keys:
+        v = runner.get(k)
+        if v not in (None, "", []):
+            return v
+    if nested_keys:
+        for parent, child_keys in nested_keys.items():
+            nested = runner.get(parent)
+            if isinstance(nested, dict):
+                for ck in child_keys:
+                    v = nested.get(ck)
+                    if v not in (None, "", []):
+                        return v
+    return None
+
+
 def _parse_race_from_next_data(data: dict, url: str) -> pd.DataFrame:
     """
-    Extract horse data from the __NEXT_DATA__ JSON structure.
-    RacingPost embeds race data under pageProps in various nested paths.
+    Extract horse data from the __NEXT_DATA__ JSON.
+    Uses recursive walker since the exact path varies across builds.
     """
-    # Navigate to pageProps
     props = data.get("props", {}).get("pageProps", {})
+    initial_state = props.get("initialState") or props.get("pageData") or props
 
-    # Try multiple known paths where race card data lives
-    race_card = (
-        props.get("raceCard") or
-        props.get("pageData", {}).get("raceCard") or
-        props.get("race") or
-        props.get("pageData", {}).get("race") or
-        {}
-    )
-
-    runners = (
-        race_card.get("runners") or
-        race_card.get("horses") or
-        props.get("runners") or
-        []
-    )
-
+    # Find the runners list anywhere in the JSON tree
+    runners, runners_path = _find_runners(initial_state)
     if not runners:
-        logger.debug(f"No runners found in __NEXT_DATA__ for {url}. Keys: {list(props.keys())}")
+        # Fallback: search the entire pageProps
+        runners, runners_path = _find_runners(props)
+    if not runners:
+        logger.debug(f"No runners list found in __NEXT_DATA__ for {url}")
         return pd.DataFrame()
 
-    # Race-level metadata
+    logger.debug(f"Found {len(runners)} runners at path: {runners_path}")
+
+    # Race-level metadata — search anywhere in initialState
     race_id = str(
-        race_card.get("raceId") or
-        race_card.get("race_id") or
         props.get("raceId") or
+        _find_value(initial_state, ["raceId", "race_id", "id"]) or
         url.rstrip("/").split("/")[-1]
     )
-    racecourse = (
-        race_card.get("courseName") or
-        race_card.get("course") or
-        props.get("courseName") or
-        ""
-    )
-    race_date = race_card.get("raceDate") or race_card.get("date") or ""
-    race_time = race_card.get("raceTime") or race_card.get("time") or ""
-    going = race_card.get("going") or race_card.get("goingDescription") or ""
-    price_money = _safe_numeric(race_card.get("prizeMoney") or race_card.get("prize"))
+    racecourse = str(_find_value(initial_state, ["courseName", "course", "racecourseName"]) or "")
+    race_date = str(_find_value(initial_state, ["raceDate", "date", "meetingDate"]) or "")
+    race_time = str(_find_value(initial_state, ["raceTime", "time", "raceStartTime"]) or "")
+    going = str(_find_value(initial_state, ["going", "goingDescription", "goingType"]) or "")
+    prize_money = _safe_numeric(_find_value(initial_state, ["prizeMoney", "prize", "winnerPrize", "totalPrizeMoney"]))
+    race_title = str(_find_value(initial_state, ["raceTitle", "title", "raceName"]) or "")
     num_runners = len(runners)
+
+    # Derive race_date from URL if still missing
+    if not race_date:
+        m = re.search(r"\d{4}-\d{2}-\d{2}", url)
+        if m:
+            race_date = m.group()
+    # Derive racecourse from URL if still missing
+    if not racecourse:
+        parts = url.rstrip("/").split("/")
+        if len(parts) >= 3:
+            racecourse = parts[-3].replace("-", " ").title()
 
     rows = []
     for runner in runners:
-        horse_name = (
-            runner.get("horseName") or
-            runner.get("name") or
-            runner.get("horse", {}).get("horseName") or
-            ""
-        )
-        horse_no = _safe_numeric(runner.get("saddleClothNo") or runner.get("clothNumber") or runner.get("number"))
-        draw = _safe_numeric(runner.get("draw") or runner.get("stall"))
-        weight = _safe_numeric(runner.get("weightValue") or runner.get("weight"))
-        horse_age = _safe_numeric(runner.get("age") or runner.get("horseAge"))
-        last_run = _safe_numeric(runner.get("daysSinceLastRun") or runner.get("lastRun"))
+        horse_name = _runner_field(
+            runner,
+            ["horseName", "name"],
+            nested_keys={"horse": ["horseName", "name"]},
+        ) or ""
 
-        # Ratings — try nested and flat
-        or_val = _safe_numeric(
-            runner.get("officialRating") or
-            runner.get("or") or
-            runner.get("OR") or
-            (runner.get("ratings") or {}).get("or")
-        )
-        ts_val = _safe_numeric(
-            runner.get("topSpeed") or
-            runner.get("ts") or
-            runner.get("TS") or
-            (runner.get("ratings") or {}).get("ts")
-        )
-        rpr_val = _safe_numeric(
-            runner.get("rpr") or
-            runner.get("RPR") or
-            (runner.get("ratings") or {}).get("rpr")
-        )
+        horse_no = _safe_numeric(_runner_field(
+            runner, ["saddleClothNo", "clothNumber", "number", "stallNumber"],
+        ))
+        draw = _safe_numeric(_runner_field(runner, ["draw", "stall", "stallDraw"]))
+        weight = _safe_numeric(_runner_field(
+            runner, ["weightValue", "weight", "weightCarried", "weightInPounds"],
+            nested_keys={"weight": ["value", "pounds", "lbs"]},
+        ))
+        horse_age = _safe_numeric(_runner_field(
+            runner, ["age", "horseAge"],
+            nested_keys={"horse": ["age"]},
+        ))
+        last_run = _safe_numeric(_runner_field(
+            runner, ["daysSinceLastRun", "lastRun", "daysSince"],
+        ))
 
-        trainer_rft = _safe_numeric(
-            runner.get("trainerRFT") or
-            runner.get("trainerForm") or
-            (runner.get("trainer") or {}).get("runToForm")
+        or_val = _safe_numeric(_runner_field(
+            runner, ["officialRating", "or", "OR"],
+            nested_keys={"ratings": ["or", "officialRating"]},
+        ))
+        ts_val = _safe_numeric(_runner_field(
+            runner, ["topSpeed", "ts", "TS"],
+            nested_keys={"ratings": ["ts", "topSpeed"]},
+        ))
+        rpr_val = _safe_numeric(_runner_field(
+            runner, ["rpr", "RPR", "racingPostRating"],
+            nested_keys={"ratings": ["rpr", "RPR"]},
+        ))
+
+        trainer_rft = _safe_numeric(_runner_field(
+            runner, ["trainerRFT", "trainerForm", "trainerRunToForm"],
+            nested_keys={"trainer": ["runToForm", "rtf", "RTF"]},
+        ))
+        jockey_allowance = _runner_field(
+            runner, ["jockeyAllowance", "allowance", "claim"],
+            nested_keys={"jockey": ["allowance", "claim"]},
         )
-        jockey_allowance = runner.get("jockeyAllowance") or runner.get("allowance")
+        form = _runner_field(runner, ["form", "formString", "horseForm"]) or ""
 
         # Compute flags
         flag1 = flag2 = flag3 = flag4 = flag5 = None
@@ -185,29 +280,25 @@ def _parse_race_from_next_data(data: dict, url: str) -> pd.DataFrame:
             "race_date": race_date,
             "race_time": race_time,
             "horse_no": horse_no,
-            "horse_name": horse_name,
-            "price_money": price_money,
+            "horse_name": str(horse_name),
+            "price_money": prize_money,
             "num_runners": num_runners,
-            "race_terms": race_card.get("raceTitle") or "",
+            "race_terms": race_title,
             "going": going,
-            "OR": or_val,
-            "TS": ts_val,
-            "RPR": rpr_val,
-            "Flag1": flag1,
-            "Flag2": flag2,
-            "Flag3": flag3,
-            "Flag4": flag4,
-            "Flag5": flag5,
+            "OR": or_val, "TS": ts_val, "RPR": rpr_val,
+            "Flag1": flag1, "Flag2": flag2, "Flag3": flag3,
+            "Flag4": flag4, "Flag5": flag5,
             "draw": draw,
-            "past_performance": runner.get("form") or runner.get("formString") or "",
+            "past_performance": str(form),
             "last_run": last_run,
             "horse_age": horse_age,
             "weight": weight,
             "trainer_RFT": trainer_rft,
-            "jockey_allowance": jockey_allowance,
+            "jockey_allowance": str(jockey_allowance) if jockey_allowance else None,
         })
 
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    return df[df["horse_name"].astype(bool)].reset_index(drop=True)
 
 
 def _parse_race_from_html(soup: BeautifulSoup, url: str) -> pd.DataFrame:
@@ -249,15 +340,34 @@ def _parse_race_from_html(soup: BeautifulSoup, url: str) -> pd.DataFrame:
         parts = url.rstrip("/").split("/")
         race_id = parts[-1] if parts else ""
 
-    # Horse names — try multiple class patterns
-    horse_name_els = (
-        soup.select("a.RC-runnerName") or
-        soup.select('[data-test-selector="link-horseName"]') or
-        soup.select(".rp-horseTable__horse a") or
-        soup.select('[class*="horseName"] a') or
-        soup.select('[class*="runnerName"]')
-    )
-    horse_names = [el.get_text(strip=True) for el in horse_name_els]
+    # Horse names — RacingPost now uses data-testid="Link__Horse" (stable across builds)
+    # Deduplicate while preserving order — page has 116 such links (multiple per horse)
+    horse_name_els = soup.select('a[data-testid="Link__Horse"]')
+    seen_horse_urls = set()
+    horse_names = []
+    for el in horse_name_els:
+        href = el.get("href", "")
+        # Take only the canonical horse URL (first occurrence), strip the race fragment
+        base = href.split("#")[0]
+        if base in seen_horse_urls:
+            continue
+        seen_horse_urls.add(base)
+        name = el.get_text(strip=True)
+        if not name:
+            # Fall back to slug from URL
+            parts = base.rstrip("/").split("/")
+            name = parts[-1].replace("-", " ").title() if parts else ""
+        if name:
+            horse_names.append(name)
+
+    if not horse_names:
+        # Fall back to older class patterns
+        for sel in ["a.RC-runnerName", '[data-test-selector="link-horseName"]',
+                    ".rp-horseTable__horse a"]:
+            els = soup.select(sel)
+            if els:
+                horse_names = [el.get_text(strip=True) for el in els]
+                break
 
     if not horse_names:
         logger.warning(f"No horses found via HTML selectors at {url}")
