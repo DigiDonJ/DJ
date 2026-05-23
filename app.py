@@ -305,6 +305,8 @@ with tab3:
             )
 
             race_df = filtered_all[filtered_all["race_id"] == selected_race_id].copy()
+            if "Flag4" not in race_df.columns:
+                race_df["Flag4"] = None
             race_df["Flag4"] = pd.to_numeric(race_df["Flag4"], errors="coerce")
             race_df = race_df.sort_values("Flag4", ascending=False)
 
