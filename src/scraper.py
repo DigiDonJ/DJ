@@ -676,5 +676,11 @@ def scrape_all_races_today(
     if not all_dfs:
         return pd.DataFrame()
 
+    # Drop all-NA columns from each frame before concat to avoid the pandas
+    # FutureWarning about dtype inference changing for empty/all-NA entries.
+    all_dfs = [df.dropna(axis=1, how="all") for df in all_dfs if not df.empty]
+    if not all_dfs:
+        return pd.DataFrame()
+
     combined = pd.concat(all_dfs, ignore_index=True)
     return combined.reset_index(drop=True)
