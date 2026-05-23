@@ -143,13 +143,43 @@ def prepare_features(
     df["Flag5"] = pd.to_numeric(df["Flag5"], errors="coerce")
     df["price_money"] = pd.to_numeric(df.get("price_money"), errors="coerce")
 
+    # --- NA imputation: race-level mean → global median fallback ---
+    # Columns where a within-race average is the most meaningful substitute.
+    _impute_with_race_mean = [
+        "OR", "TS", "RPR", "Flag1", "Flag2", "Flag3", "Flag4", "Flag5",
+        "draw", "horse_age", "weight", "price_money",
+    ]
+    for col in _impute_with_race_mean:
+        if col not in df.columns:
+            continue
+        df[col] = df[col].replace([np.inf, -np.inf], np.nan)
+        race_mean = df.groupby("race_id")[col].transform("mean")
+        global_median = df[col].median()
+        df[col] = df[col].fillna(race_mean).fillna(global_median)
+
+    # last_run and trainer_RFT: use global median (no within-race meaning)
+    for col in ["last_run", "trainer_RFT"]:
+        if col in df.columns:
+            df[col] = df[col].replace([np.inf, -np.inf], np.nan)
+            df[col] = df[col].fillna(df[col].median())
+
+    # Race-relative derived features — clip inf then fill residual NAs
+    for col in ["flag4_z_in_race", "or_pct_in_race"]:
+        if col in df.columns:
+            df[col] = df[col].replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+    if "flag4_rank_in_race" in df.columns:
+        df["flag4_rank_in_race"] = df["flag4_rank_in_race"].fillna(
+            df.get("field_size", pd.Series(dtype=float)) / 2
+        )
+
     for col in BOOLEAN_FEATURES:
         df[col] = df[col].astype(bool)
 
     for col in CATEGORICAL_FEATURES:
         df[col] = df[col].fillna("Unknown").astype(str)
 
-    # --- Drop rows with no usable features ---
+    # --- Drop rows still missing both Flag4 and OR after imputation ---
     df = df.dropna(subset=["Flag4", "OR"])
 
     return df

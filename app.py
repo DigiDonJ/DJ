@@ -45,6 +45,9 @@ def _init_state():
         "results_error": None,
         "train_metrics": None,
         "train_error": None,
+        "today_timetable": None,
+        "today_courses": [],
+        "selected_courses": [],
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -61,9 +64,50 @@ with st.sidebar:
     st.title("🏇 Horse Race Predictor")
     st.markdown("---")
 
-    # --- Scrape today ---
-    if st.button("🔄 Scrape Today's Races", use_container_width=True):
-        with st.spinner("Scraping today's racecards from RacingPost…"):
+    # --- Step 1: fetch today's course list ---
+    if st.button("📋 Fetch Today's Courses", use_container_width=True):
+        with st.spinner("Fetching today's UK race schedule…"):
+            try:
+                from src.scraper import scrape_time_order
+                timetable = scrape_time_order()
+                if timetable.empty:
+                    st.warning("No UK races found for today.")
+                    st.session_state["today_courses"] = []
+                    st.session_state["today_timetable"] = None
+                else:
+                    courses = sorted(timetable["racecourse"].dropna().unique().tolist())
+                    st.session_state["today_courses"] = courses
+                    st.session_state["selected_courses"] = courses
+                    st.session_state["today_timetable"] = timetable
+                    st.success(
+                        f"Found {len(timetable)} races at "
+                        f"{len(courses)} course(s). Select below then scrape."
+                    )
+            except Exception as e:
+                st.error(f"Failed to fetch schedule: {e}")
+
+    # --- Step 2: course picker ---
+    if st.session_state["today_courses"]:
+        st.session_state["selected_courses"] = st.multiselect(
+            "Courses to scrape",
+            options=st.session_state["today_courses"],
+            default=st.session_state["selected_courses"],
+            key="course_picker",
+        )
+
+    # --- Step 3: scrape selected courses ---
+    scrape_ready = bool(st.session_state.get("today_timetable") is not None
+                        and st.session_state.get("selected_courses"))
+    if st.button("🔄 Scrape Selected Races", use_container_width=True, disabled=not scrape_ready):
+        timetable = st.session_state["today_timetable"]
+        selected = st.session_state["selected_courses"]
+        url_list = (
+            timetable[timetable["racecourse"].isin(selected)]["meeting_url"].tolist()
+            if timetable is not None and selected
+            else None
+        )
+
+        with st.spinner(f"Scraping {len(url_list or [])} races…"):
             try:
                 from src.scraper import scrape_all_races_today
                 from src.flags import build_today_predictions, get_top_picks
@@ -73,13 +117,13 @@ with st.sidebar:
                 def progress_cb(current, total, racecourse):
                     prog_placeholder.info(f"[{current}/{total}] {racecourse}")
 
-                df = scrape_all_races_today(progress_callback=progress_cb)
+                df = scrape_all_races_today(progress_callback=progress_cb, url_list=url_list)
                 prog_placeholder.empty()
 
                 if df.empty or "race_id" not in df.columns:
                     st.session_state["scrape_error"] = (
-                        "No races found for today. RacingPost may have updated their page "
-                        "structure, or there are no races scheduled."
+                        "No races found. RacingPost may have updated their page "
+                        "structure, or there are no races scheduled for the selected courses."
                     )
                 else:
                     st.session_state["racecard_df"] = df
