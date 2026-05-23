@@ -24,6 +24,9 @@ THROTTLE_SECONDS = 5
 # Valid race card URL: /racecards/{course_id}/{course_name}/{date}/{race_id}/
 RACE_URL_RE = re.compile(r"/racecards/\d+/[^/]+/\d{4}-\d{2}-\d{2}/\d+")
 
+TODAY = date.today().strftime("%Y-%m-%d")
+TODAY_RACE_URL_RE = re.compile(rf"/racecards/\d+/[^/]+/{re.escape(TODAY)}/\d+")
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -381,7 +384,7 @@ def scrape_time_order() -> pd.DataFrame:
                 )
                 if not meeting_url.startswith("http"):
                     meeting_url = f"{BASE_URI}{meeting_url}"
-                if race_id and RACE_URL_RE.search(meeting_url):
+                if race_id and TODAY_RACE_URL_RE.search(meeting_url):
                     records.append({
                         "race_id": race_id,
                         "racecourse": course,
@@ -397,7 +400,7 @@ def scrape_time_order() -> pd.DataFrame:
         seen = set()
         for a in all_links:
             href = a.get("href", "")
-            if RACE_URL_RE.search(href) and href not in seen:
+            if TODAY_RACE_URL_RE.search(href) and href not in seen:
                 seen.add(href)
                 meeting_url = f"{BASE_URI}{href}" if not href.startswith("http") else href
                 parts = href.rstrip("/").split("/")
@@ -432,9 +435,9 @@ def scrape_race_card(url: str, client: Optional[httpx.Client] = None) -> pd.Data
     """
     Scrape one race card page. Tries __NEXT_DATA__ JSON first, then HTML selectors.
     """
-    # Validate URL matches race card pattern before fetching
-    if not RACE_URL_RE.search(url):
-        logger.debug(f"Skipping non-race URL: {url}")
+    # Only scrape today's races
+    if not TODAY_RACE_URL_RE.search(url):
+        logger.debug(f"Skipping non-today URL: {url}")
         return pd.DataFrame()
 
     soup, raw = _get_soup(url, client) if client is None else (_soup_with_client(url, client))
@@ -470,9 +473,9 @@ def scrape_all_races_today(
         time_order = scrape_time_order()
         url_list = time_order["meeting_url"].tolist()
 
-    # Filter to only valid race card URLs
-    url_list = [u for u in url_list if RACE_URL_RE.search(u)]
-    logger.info(f"Scraping {len(url_list)} valid race URLs")
+    # Filter to only today's race card URLs
+    url_list = [u for u in url_list if TODAY_RACE_URL_RE.search(u)]
+    logger.info(f"Scraping {len(url_list)} races for {TODAY}")
 
     all_dfs = []
     total = len(url_list)
