@@ -74,13 +74,36 @@ def load_training_data(
 
     # Map all known R / legacy column name variants to canonical Python names
     _CARD_RENAMES = {
+        # race identifiers
         "raceid": "race_id",
         "race id": "race_id",
         "racedate": "race_date",
         "racetime": "race_time",
+        # horse
         "horsename": "horse_name",
         "horseno": "horse_no",
         "horseage": "horse_age",
+        # ratings — restore uppercase after .lower()
+        "or": "OR",
+        "offrating": "OR",
+        "off_rating": "OR",
+        "official_rating": "OR",
+        "ts": "TS",
+        "topspeed": "TS",
+        "top_speed": "TS",
+        "rpr": "RPR",
+        "racingpost_rating": "RPR",
+        # flags — restore mixed-case after .lower()
+        "flag1": "Flag1",
+        "flag2": "Flag2",
+        "flag3": "Flag3",
+        "flag4": "Flag4",
+        "flag5": "Flag5",
+        # weight
+        "wgt": "weight",
+        "weightcarried": "weight",
+        "weight_carried": "weight",
+        # misc
         "priceofmoney": "price_money",
         "prize_money": "price_money",
         "numrunners": "num_runners",

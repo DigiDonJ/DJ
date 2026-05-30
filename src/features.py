@@ -141,10 +141,13 @@ def prepare_features(
     df["flag4_z_in_race"] = df.groupby("race_id")["Flag4_num"].transform(
         lambda x: (x - x.mean()) / (x.std() + 1e-8)
     )
-    or_num = pd.to_numeric(df["OR"], errors="coerce")
-    df["or_pct_in_race"] = or_num / df.groupby("race_id")["OR"].transform(
-        lambda x: pd.to_numeric(x, errors="coerce").max()
-    )
+    or_num = pd.to_numeric(df.get("OR"), errors="coerce")
+    if "OR" in df.columns:
+        df["or_pct_in_race"] = or_num / df.groupby("race_id")["OR"].transform(
+            lambda x: pd.to_numeric(x, errors="coerce").max()
+        )
+    else:
+        df["or_pct_in_race"] = np.nan
 
     # --- Type casts ---
     for col in ["OR", "TS", "RPR", "Flag1", "Flag2", "Flag3", "draw",
