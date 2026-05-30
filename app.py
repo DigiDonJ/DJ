@@ -31,8 +31,23 @@ st.set_page_config(
 logging.basicConfig(level=logging.INFO)
 
 # ---------------------------------------------------------------------------
-# Session state helpers
+# Helpers
 # ---------------------------------------------------------------------------
+
+def _append_to_csv(new_df: pd.DataFrame, path: str, dedup_keys: list) -> int:
+    """Append new_df to a CSV file, deduplicating on dedup_keys. Returns total row count."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if os.path.exists(path):
+        existing = pd.read_csv(path, low_memory=False)
+        combined = pd.concat([existing, new_df], ignore_index=True)
+        combined = combined.drop_duplicates(subset=dedup_keys, keep="last")
+    else:
+        combined = new_df.drop_duplicates(subset=dedup_keys, keep="last")
+    combined.to_csv(path, index=False)
+    return len(combined)
+
+
+
 
 def _init_state():
     defaults = {
@@ -129,7 +144,16 @@ with st.sidebar:
                     st.session_state["racecard_df"] = df
                     st.session_state["flag_picks"] = get_top_picks(df, n=3)
                     st.session_state["scrape_error"] = None
-                    st.success(f"Scraped {df['race_id'].nunique()} races, {len(df)} horses.")
+
+                    # Append to historical racecards (dedup on race_id + horse_name)
+                    total = _append_to_csv(
+                        df, "data/historical/raceid.csv",
+                        dedup_keys=["race_id", "horse_name"],
+                    )
+                    st.success(
+                        f"Scraped {df['race_id'].nunique()} races, {len(df)} horses. "
+                        f"Historical racecards: {total} rows."
+                    )
 
                     # Try ML predictions if models available
                     from src.predict import models_available, load_models
@@ -162,7 +186,13 @@ with st.sidebar:
                 else:
                     st.session_state["results_df"] = results
                     st.session_state["results_error"] = None
-                    st.success(f"Loaded {len(results)} results.")
+
+                    # Append to historical results (dedup on race_id + horse_name)
+                    total = _append_to_csv(
+                        results, "data/historical/results.csv",
+                        dedup_keys=["race_id", "horse_name"],
+                    )
+                    st.success(f"Loaded {len(results)} results. Historical results: {total} rows.")
             except Exception as e:
                 st.session_state["results_error"] = str(e)
                 st.error(f"Results scrape failed: {e}")
