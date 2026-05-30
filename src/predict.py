@@ -155,9 +155,11 @@ def get_top_ml_picks(
     if selections_only:
         df = df[df["is_selection"]]
 
-    df["ml_rank"] = df.groupby("race_id")["win_probability"].rank(
-        ascending=False, method="first"
-    ).astype(int)
+    df["ml_rank"] = (
+        df.groupby("race_id")["win_probability"]
+        .rank(ascending=False, method="first", na_option="bottom")
+        .astype(int)
+    )
 
     top = df[df["ml_rank"] <= n].copy()
     top = top.sort_values(["race_time", "race_id", "ml_rank"]).reset_index(drop=True)

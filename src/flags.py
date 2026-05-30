@@ -113,7 +113,11 @@ def get_top_picks(df: pd.DataFrame, n: int = 3, sort_by: str = "Flag4") -> pd.Da
     df[sort_by] = pd.to_numeric(df[sort_by], errors="coerce")
 
     # Rank within each race (1 = highest flag score)
-    df["flag_rank"] = df.groupby("race_id")[sort_by].rank(ascending=False, method="first").astype(int)
+    df["flag_rank"] = (
+        df.groupby("race_id")[sort_by]
+        .rank(ascending=False, method="first", na_option="bottom")
+        .astype(int)
+    )
 
     top = df[df["flag_rank"] <= n].copy()
     top = top.sort_values(["race_time", "race_id", "flag_rank"]).reset_index(drop=True)

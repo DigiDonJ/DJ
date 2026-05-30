@@ -292,9 +292,11 @@ with tab2:
                 # Add ml_rank if not present
                 if "ml_rank" not in filtered_ml.columns:
                     filtered_ml = filtered_ml.copy()
-                    filtered_ml["ml_rank"] = filtered_ml.groupby("race_id")["win_probability"].rank(
-                        ascending=False, method="first"
-                    ).astype(int)
+                    filtered_ml["ml_rank"] = (
+                        filtered_ml.groupby("race_id")["win_probability"]
+                        .rank(ascending=False, method="first", na_option="bottom")
+                        .astype(int)
+                    )
 
                 top5 = filtered_ml[filtered_ml["ml_rank"] <= 5].copy()
 

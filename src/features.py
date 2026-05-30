@@ -163,6 +163,13 @@ def prepare_features(
             df[col] = df[col].replace([np.inf, -np.inf], np.nan)
             df[col] = df[col].fillna(df[col].median())
 
+    # racewkday / racemonth: fill with mode (all today's races share the same date,
+    # but if race_date failed to parse we'd get NaN)
+    for col in ["racewkday", "racemonth"]:
+        if col in df.columns:
+            mode = df[col].mode()
+            df[col] = df[col].fillna(mode.iloc[0] if not mode.empty else 0)
+
     # Race-relative derived features — clip inf then fill residual NAs
     for col in ["flag4_z_in_race", "or_pct_in_race"]:
         if col in df.columns:
