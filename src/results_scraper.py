@@ -7,6 +7,8 @@ Ports the user's R results-scraping logic to Python, fixing:
 - append=TRUE duplication issues
 """
 
+import csv
+import os
 import time
 import logging
 from datetime import date, timedelta
@@ -20,6 +22,43 @@ logger = logging.getLogger(__name__)
 
 BASE_URI = "https://www.racingpost.com"
 THROTTLE_SECONDS = 5
+_UK_COUNTRIES = {"ENGLAND", "SCOTLAND", "WALES"}
+
+
+def _load_uk_course_slugs() -> set:
+    """Load UK course URL slugs from data/Coursecountry.csv."""
+    slugs: set = set()
+    cc_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "data", "Coursecountry.csv",
+    )
+    if not os.path.exists(cc_path):
+        return slugs
+    try:
+        with open(cc_path, newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                if row.get("Country", "").strip().upper() in _UK_COUNTRIES:
+                    course = row.get("racecourse", "").strip()
+                    if course:
+                        slugs.add(course.lower().replace(" ", "-"))
+    except Exception as exc:
+        logger.warning(f"Could not load Coursecountry.csv: {exc}")
+    return slugs
+
+
+_UK_SLUGS = _load_uk_course_slugs()
+
+
+def _is_uk_result_url(url: str) -> bool:
+    """Return True if the result URL belongs to a UK course."""
+    if not _UK_SLUGS:
+        return True  # CSV missing — don't filter
+    # Result URLs: /results/{date}/{course-slug}/{race-id}/
+    parts = url.rstrip("/").split("/")
+    if len(parts) >= 3:
+        slug = parts[-2]  # second-to-last segment is course slug
+        return slug in _UK_SLUGS
+    return False
 
 HEADERS = {
     "User-Agent": (
@@ -92,7 +131,15 @@ def scrape_results_for_date(target_date: date) -> pd.DataFrame:
                 if full not in links:
                     links.append(full)
 
-    logger.info(f"Found {len(links)} result pages for {date_str}")
+    # Filter to UK courses only
+    uk_links = [u for u in links if _is_uk_result_url(u)]
+    if uk_links:
+        logger.info(f"UK filter: {len(uk_links)}/{len(links)} result pages are UK courses.")
+        links = uk_links
+    else:
+        logger.warning(f"UK filter matched 0 of {len(links)} result pages — keeping all.")
+
+    logger.info(f"Scraping {len(links)} result pages for {date_str}")
 
     all_records = []
     with httpx.Client(headers=HEADERS, timeout=30, follow_redirects=True) as client:
