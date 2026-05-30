@@ -68,19 +68,57 @@ def load_training_data(
     cards = pd.read_csv(raceid_path, low_memory=False)
     results = pd.read_csv(results_path, low_memory=False)
 
-    # Normalise column names
-    cards.columns = cards.columns.str.strip().str.lower().str.replace(" ", "_")
-    results.columns = results.columns.str.strip().str.lower().str.replace(" ", "_")
+    # Normalise column names: strip, lowercase, spaces → underscores
+    cards.columns = cards.columns.str.strip().str.lower().str.replace(" ", "_", regex=False)
+    results.columns = results.columns.str.strip().str.lower().str.replace(" ", "_", regex=False)
 
-    # Ensure consistent key names
-    if "horse_no" not in cards.columns and "horseno" in cards.columns:
-        cards = cards.rename(columns={"horseno": "horse_no"})
-    if "horse_num" not in results.columns and "resulthorsenum" in results.columns:
-        results = results.rename(columns={"resulthorsenum": "horse_num"})
-    if "race_id" not in results.columns and "resultraceid" in results.columns:
-        results = results.rename(columns={"resultraceid": "race_id"})
-    if "result_pos" not in results.columns and "result_pos" in results.columns:
-        pass  # already named
+    # Map all known R / legacy column name variants to canonical Python names
+    _CARD_RENAMES = {
+        "raceid": "race_id",
+        "race id": "race_id",
+        "racedate": "race_date",
+        "racetime": "race_time",
+        "horsename": "horse_name",
+        "horseno": "horse_no",
+        "horseage": "horse_age",
+        "priceofmoney": "price_money",
+        "prize_money": "price_money",
+        "numrunners": "num_runners",
+        "tracetype": "race_terms",
+        "trainerrft": "trainer_RFT",
+        "trainer_rft": "trainer_RFT",
+        "lastrun": "last_run",
+        "jockeyallowance": "jockey_allowance",
+        "pastperformance": "past_performance",
+    }
+    _RESULT_RENAMES = {
+        "resultraceid": "race_id",
+        "raceid": "race_id",
+        "resulthorsenum": "horse_num",
+        "resulthorsename": "horse_name",
+        "horsename": "horse_name",
+        "resultpos": "result_pos",
+        "position": "result_pos",
+        "pos": "result_pos",
+        "fin_pos": "result_pos",
+        "resultracecourse": "racecourse",
+        "resultracedate": "race_date",
+        "resultracetime": "race_time",
+        "horse_num": "horse_num",
+    }
+    cards = cards.rename(columns={k: v for k, v in _CARD_RENAMES.items() if k in cards.columns})
+    results = results.rename(columns={k: v for k, v in _RESULT_RENAMES.items() if k in results.columns})
+
+    if "race_id" not in cards.columns:
+        raise KeyError(
+            f"'race_id' column not found in {raceid_path}. "
+            f"Available columns: {list(cards.columns)}"
+        )
+    if "race_id" not in results.columns:
+        raise KeyError(
+            f"'race_id' column not found in {results_path}. "
+            f"Available columns: {list(results.columns)}"
+        )
 
     # Keep only winner rows for labelling (result_pos == 1)
     winners = results[pd.to_numeric(results.get("result_pos"), errors="coerce") == 1][
