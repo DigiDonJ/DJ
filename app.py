@@ -491,51 +491,35 @@ with tab4:
 
 with tab5:
     st.header("Train Models")
-    st.markdown(
-        "Upload historical racecard and results CSV files to train the XGBoost + LightGBM models."
-    )
 
-    col1, col2 = st.columns(2)
+    CARDS_PATH = "data/historical/raceid.csv"
+    RESULTS_PATH = "data/historical/results.csv"
 
-    with col1:
-        st.subheader("Upload historical racecards")
-        uploaded_cards = st.file_uploader(
-            "raceid.csv (historical racecards)",
-            type="csv",
-            key="upload_cards",
-        )
-        if uploaded_cards:
-            os.makedirs("data/historical", exist_ok=True)
-            with open("data/historical/raceid.csv", "wb") as f:
-                f.write(uploaded_cards.getbuffer())
-            st.success("raceid.csv saved.")
+    cards_exist = os.path.exists(CARDS_PATH)
+    results_exist = os.path.exists(RESULTS_PATH)
 
-    with col2:
-        st.subheader("Upload historical results")
-        uploaded_results = st.file_uploader(
-            "results.csv (historical results)",
-            type="csv",
-            key="upload_results",
-        )
-        if uploaded_results:
-            os.makedirs("data/historical", exist_ok=True)
-            with open("data/historical/results.csv", "wb") as f:
-                f.write(uploaded_results.getbuffer())
-            st.success("results.csv saved.")
+    # Show what's on disk
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if cards_exist:
+            n = len(pd.read_csv(CARDS_PATH, usecols=[0]))
+            st.success(f"raceid.csv — {n:,} rows")
+        else:
+            st.warning("raceid.csv not found in data/historical/")
+    with col_b:
+        if results_exist:
+            n = len(pd.read_csv(RESULTS_PATH, usecols=[0]))
+            st.success(f"results.csv — {n:,} rows")
+        else:
+            st.warning("results.csv not found in data/historical/")
+
+    st.caption("Files are built automatically each day by the scrape buttons in the sidebar.")
 
     st.markdown("---")
 
-    cards_exist = os.path.exists("data/historical/raceid.csv")
-    results_exist = os.path.exists("data/historical/results.csv")
-
     if not cards_exist or not results_exist:
-        st.warning(
-            "Both `data/historical/raceid.csv` and `data/historical/results.csv` are required. "
-            "Upload them above or place them in the `data/historical/` folder."
-        )
+        st.info("Scrape today's races and yesterday's results to build the historical files.")
     else:
-        st.success("Historical data found. Ready to train.")
-
         if st.button("🚀 Train Models", use_container_width=True):
             with st.spinner("Training XGBoost + LightGBM… this may take a few minutes."):
                 try:
@@ -543,7 +527,6 @@ with tab5:
                     metrics = train()
                     st.session_state["train_metrics"] = metrics
                     st.session_state["train_error"] = None
-                    # Reload models
                     from src.predict import load_models
                     st.session_state["models"] = load_models()
                     st.success("Training complete! Models saved to models/")
