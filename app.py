@@ -157,7 +157,9 @@ with st.sidebar:
 
                     # Try ML predictions if models available
                     from src.predict import models_available, load_models
-                    if models_available():
+                    if not models_available():
+                        st.info("No trained models yet — go to the Train tab to train first.")
+                    else:
                         try:
                             from src.features import prepare_features
                             from src.predict import predict_win_probabilities
@@ -165,10 +167,17 @@ with st.sidebar:
                             if st.session_state["models"] is None:
                                 st.session_state["models"] = load_models()
 
-                            prep_df = prepare_features(df)
-                            if not prep_df.empty:
+                            # england_only=False: scraper already limits to UK courses
+                            prep_df = prepare_features(df, england_only=False)
+                            if prep_df.empty:
+                                st.warning(
+                                    "ML predictions skipped — no horses remained after "
+                                    "feature preparation (OR/TS/RPR likely all missing)."
+                                )
+                            else:
                                 preds = predict_win_probabilities(prep_df, st.session_state["models"])
                                 st.session_state["ml_predictions"] = preds
+                                st.success(f"ML predictions ready for {preds['race_id'].nunique()} races.")
                         except Exception as e:
                             st.warning(f"ML prediction failed: {e}")
             except Exception as e:
@@ -285,15 +294,18 @@ with tab2:
     from src.predict import models_available, load_metrics
 
     if not models_available():
-        st.warning(
-            "No trained models found. Go to the **Train / Evaluate** tab to train models first, "
-            "or run: `python src/train.py`"
+        st.warning("No trained models yet.")
+        st.markdown(
+            "**To get ML predictions:**\n"
+            "1. Scrape today's races and yesterday's results a few times to build up `data/historical/`\n"
+            "2. Go to the **Train / Evaluate** tab and click **🚀 Train Models**\n"
+            "3. Come back here and scrape today's races again"
         )
     else:
         ml_preds = st.session_state.get("ml_predictions")
 
         if ml_preds is None or ml_preds.empty:
-            st.info("ML predictions will appear here after scraping today's races.")
+            st.info("Models are ready. Scrape today's races (sidebar) to generate predictions.")
         else:
             filtered_ml = _apply_filters(ml_preds)
 
