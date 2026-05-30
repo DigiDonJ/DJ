@@ -105,7 +105,19 @@ def prepare_features(
     if df.empty:
         return df
 
-    # --- Drop Flag4 NaN rows ---
+    # --- Compute Flag1-5 if not already present (historical R CSVs have raw ratings only) ---
+    if "Flag4" not in df.columns:
+        or_ = pd.to_numeric(df.get("OR"), errors="coerce")
+        ts  = pd.to_numeric(df.get("TS"), errors="coerce")
+        rpr = pd.to_numeric(df.get("RPR"), errors="coerce")
+        w   = pd.to_numeric(df.get("weight"), errors="coerce")
+        df["Flag1"] = ts + rpr - or_
+        df["Flag2"] = ts - w
+        df["Flag3"] = rpr - w
+        df["Flag4"] = (df["Flag1"] * 2) + (df["Flag2"] * 1) + (df["Flag3"] * 1.75)
+        df["Flag5"] = (df["Flag1"] + df["Flag2"] + df["Flag3"]) / 3
+
+    # --- Drop rows where Flag4 cannot be computed at all ---
     df = df.dropna(subset=["Flag4"])
 
     # --- Date features ---
