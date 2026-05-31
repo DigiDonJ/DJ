@@ -13,3 +13,7 @@ data/processed/
 data/synthetic/
 .ipynb_checkpoints/
 .DS_Store
+
+# Diagnostic outputs
+diagnose_output.txt
+diagnose_page.html
