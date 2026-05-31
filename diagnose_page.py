@@ -185,9 +185,41 @@ def main():
         import traceback
         log(traceback.format_exc())
 
-    # 9. If JSON parser failed, dump initialState structure
+    # 9. Dump first runner's raw structure — confirms which keys hold OR/TS/RPR
+    log("\n=== 9. First runner raw structure ===")
     if data:
-        log("\n=== 9. initialState structure ===")
+        try:
+            from src.scraper import _find_runners
+            props = data.get("props", {}).get("pageProps", {})
+            initial_state = props.get("initialState") or props.get("pageData") or props
+            runners, rpath = _find_runners(initial_state)
+            if not runners:
+                runners, rpath = _find_runners(props)
+            if runners:
+                log(f"  Runners path: {rpath}   count: {len(runners)}")
+                r = runners[0]
+                log(f"  Top-level keys: {list(r.keys())}")
+                for k, v in r.items():
+                    if isinstance(v, dict):
+                        log(f"    [{k}] -> {list(v.keys())[:15]}")
+                        for kk, vv in list(v.items())[:8]:
+                            if isinstance(vv, dict):
+                                log(f"      [{kk}] -> {list(vv.keys())[:10]}")
+                            elif not isinstance(vv, list):
+                                log(f"      {kk}: {vv}")
+                    elif isinstance(v, list) and v:
+                        log(f"    {k} (list[{len(v)}]): {str(v[0])[:60]}")
+                    else:
+                        log(f"    {k}: {v}")
+            else:
+                log("  No runners found in JSON")
+        except Exception as e:
+            import traceback as _tb
+            log(f"  Error: {e}\n{_tb.format_exc()}")
+
+    # 10. initialState structure
+    if data:
+        log("\n=== 10. initialState top-level structure ===")
         try:
             props = data.get("props", {}).get("pageProps", {})
             initial_state = props.get("initialState", {})

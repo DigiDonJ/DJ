@@ -271,50 +271,71 @@ def _parse_race_from_next_data(data: dict, url: str) -> pd.DataFrame:
 
     rows = []
     for runner in runners:
-        horse_name = _runner_field(
-            runner,
-            ["horseName", "name"],
-            nested_keys={"horse": ["horseName", "name"]},
-        ) or ""
-
-        horse_no = _safe_numeric(_runner_field(
-            runner, ["saddleClothNo", "clothNumber", "number", "stallNumber"],
-        ))
-        draw = _safe_numeric(_runner_field(runner, ["draw", "stall", "stallDraw"]))
-        weight = _safe_numeric(_runner_field(
-            runner, ["weightValue", "weight", "weightCarried", "weightInPounds"],
-            nested_keys={"weight": ["value", "pounds", "lbs"]},
-        ))
-        horse_age = _safe_numeric(_runner_field(
-            runner, ["age", "horseAge"],
-            nested_keys={"horse": ["age"]},
-        ))
-        last_run = _safe_numeric(_runner_field(
-            runner, ["daysSinceLastRun", "lastRun", "daysSince"],
-        ))
-
-        or_val = _safe_numeric(_runner_field(
-            runner, ["officialRating", "or", "OR"],
-            nested_keys={"ratings": ["or", "officialRating"]},
-        ))
-        ts_val = _safe_numeric(_runner_field(
-            runner, ["topSpeed", "ts", "TS"],
-            nested_keys={"ratings": ["ts", "topSpeed"]},
-        ))
-        rpr_val = _safe_numeric(_runner_field(
-            runner, ["rpr", "RPR", "racingPostRating"],
-            nested_keys={"ratings": ["rpr", "RPR"]},
-        ))
-
-        trainer_rft = _safe_numeric(_runner_field(
-            runner, ["trainerRFT", "trainerForm", "trainerRunToForm"],
-            nested_keys={"trainer": ["runToForm", "rtf", "RTF"]},
-        ))
-        jockey_allowance = _runner_field(
-            runner, ["jockeyAllowance", "allowance", "claim"],
-            nested_keys={"jockey": ["allowance", "claim"]},
+        # _find_value does a full recursive DFS so ratings nested at any depth are found.
+        horse_name = (
+            _runner_field(runner, ["horseName", "name"],
+                          nested_keys={"horse": ["horseName", "name"]}) or
+            _find_value(runner, ["horseName", "horsename", "name"], max_depth=4) or ""
         )
-        form = _runner_field(runner, ["form", "formString", "horseForm"]) or ""
+
+        horse_no = _safe_numeric(
+            _runner_field(runner, ["saddleClothNo", "clothNumber", "number", "stallNumber",
+                                   "saddleCloth", "runnerId"]) or
+            _find_value(runner, ["saddleClothNo", "clothNumber", "saddleCloth",
+                                 "number", "stallNumber"], max_depth=4)
+        )
+        draw = _safe_numeric(
+            _runner_field(runner, ["draw", "stall", "stallDraw", "stallNumber"]) or
+            _find_value(runner, ["draw", "stall", "stallDraw"], max_depth=4)
+        )
+        weight = _safe_numeric(
+            _runner_field(runner, ["weightValue", "weight", "weightCarried",
+                                   "weightInPounds", "lbs"],
+                          nested_keys={"weight": ["value", "pounds", "lbs",
+                                                  "weightValue", "carried"]}) or
+            _find_value(runner, ["weightValue", "weightCarried", "weightInPounds",
+                                 "lbs", "weight"], max_depth=5)
+        )
+        horse_age = _safe_numeric(
+            _runner_field(runner, ["age", "horseAge"],
+                          nested_keys={"horse": ["age", "horseAge"]}) or
+            _find_value(runner, ["age", "horseAge"], max_depth=4)
+        )
+        last_run = _safe_numeric(
+            _runner_field(runner, ["daysSinceLastRun", "lastRun", "daysSince",
+                                   "daysSinceLastRace"]) or
+            _find_value(runner, ["daysSinceLastRun", "lastRun", "daysSince",
+                                 "daysSinceLastRace"], max_depth=4)
+        )
+
+        # Ratings: use full recursive search — they can be at runner.ratings.*,
+        # runner.horse.ratings.*, runner.horse.*, or directly on runner.
+        or_val = _safe_numeric(_find_value(runner, [
+            "officialRating", "or", "OR", "official_rating",
+            "ratingValue", "handicapRating", "ofr",
+        ], max_depth=6))
+        ts_val = _safe_numeric(_find_value(runner, [
+            "topSpeed", "ts", "TS", "top_speed", "topspeed",
+        ], max_depth=6))
+        rpr_val = _safe_numeric(_find_value(runner, [
+            "rpr", "RPR", "racingPostRating", "racing_post_rating", "rpRating",
+        ], max_depth=6))
+
+        trainer_rft = _safe_numeric(
+            _runner_field(runner, ["trainerRFT", "trainerForm", "trainerRunToForm"],
+                          nested_keys={"trainer": ["runToForm", "rtf", "RTF",
+                                                   "formPercentage", "winPercentage"]}) or
+            _find_value(runner, ["trainerRFT", "runToForm", "rtf", "RTF"], max_depth=5)
+        )
+        jockey_allowance = (
+            _runner_field(runner, ["jockeyAllowance", "allowance", "claim"],
+                          nested_keys={"jockey": ["allowance", "claim"]}) or
+            _find_value(runner, ["jockeyAllowance", "allowance", "claim"], max_depth=4)
+        )
+        form = (
+            _runner_field(runner, ["form", "formString", "horseForm", "recentForm"]) or
+            _find_value(runner, ["form", "formString", "horseForm", "recentForm"], max_depth=4) or ""
+        )
 
         # Compute flags
         flag1 = flag2 = flag3 = flag4 = flag5 = None
