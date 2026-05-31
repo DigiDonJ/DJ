@@ -628,28 +628,99 @@ def scrape_time_order() -> pd.DataFrame:
     return df
 
 
+def _patch_ratings_from_html(df: pd.DataFrame, soup: BeautifulSoup, url: str = "") -> pd.DataFrame:
+    """
+    OR/TS/RPR ratings live in the page HTML, not in the __NEXT_DATA__ JSON.
+    Parse ratings from HTML and merge into the JSON-derived runner DataFrame.
+
+    Matching strategy: normalised horse name first; positional fallback when
+    fewer than half the names matched but the runner counts are the same.
+    """
+    html_df = _parse_race_from_html(soup, url)
+    if html_df.empty:
+        logger.debug("_patch_ratings_from_html: HTML parse returned empty — no ratings to patch")
+        return df
+
+    PATCH_COLS = [
+        "OR", "TS", "RPR",
+        "draw", "weight", "last_run", "horse_age", "past_performance",
+        "Flag1", "Flag2", "Flag3", "Flag4", "Flag5",
+    ]
+
+    def _norm(s):
+        return re.sub(r"[^a-z0-9]", "", str(s).lower())
+
+    def _missing(v):
+        """True when a cell has no usable value (None, NaN, or empty string)."""
+        if v is None:
+            return True
+        if isinstance(v, float) and pd.isna(v):
+            return True
+        if isinstance(v, str) and v.strip() == "":
+            return True
+        return False
+
+    html_by_name = {_norm(row["horse_name"]): row for _, row in html_df.iterrows()}
+
+    df = df.copy()
+    matched = 0
+    for df_idx, json_name in zip(df.index, df["horse_name"]):
+        html_row = html_by_name.get(_norm(json_name))
+        if html_row is None:
+            continue
+        for col in PATCH_COLS:
+            if col not in html_df.columns:
+                continue
+            existing = df.at[df_idx, col] if col in df.columns else None
+            if _missing(existing):
+                df.at[df_idx, col] = html_row[col]
+        matched += 1
+
+    logger.debug(f"_patch_ratings_from_html: name-matched {matched}/{len(df)} runners")
+
+    # Positional fallback when name matching fails but runner counts agree
+    if matched < len(df) * 0.5 and len(html_df) == len(df):
+        logger.debug("_patch_ratings_from_html: falling back to positional matching")
+        for df_idx, (_, html_row) in zip(df.index, html_df.iterrows()):
+            for col in PATCH_COLS:
+                if col not in html_df.columns:
+                    continue
+                existing = df.at[df_idx, col] if col in df.columns else None
+                if _missing(existing):
+                    df.at[df_idx, col] = html_row[col]
+
+    return df
+
+
 def scrape_race_card(url: str, client: Optional[httpx.Client] = None) -> pd.DataFrame:
     """
-    Scrape one race card page. Tries __NEXT_DATA__ JSON first, then HTML selectors.
+    Scrape one race card page.
+
+    JSON (__NEXT_DATA__) is tried first for runner metadata (horse names, race
+    info, draw, weight …).  OR / TS / RPR ratings live in the DOM, not the
+    JSON, so we always follow up with an HTML parse and merge the ratings in.
     """
-    # Only scrape today's races
     if not TODAY_RACE_URL_RE.search(url):
         logger.debug(f"Skipping non-today URL: {url}")
         return pd.DataFrame()
 
-    soup, raw = _get_soup(url, client) if client is None else (_soup_with_client(url, client))
+    soup, raw = _get_soup(url, client)
 
-    # Try JSON extraction first (most reliable)
+    # Attempt JSON extraction for runner metadata
     next_data = _extract_next_data(raw)
+    df = pd.DataFrame()
     if next_data:
         df = _parse_race_from_next_data(next_data, url)
-        if not df.empty:
-            return df
 
-    # Fall back to HTML
-    df = _parse_race_from_html(soup, url)
     if df.empty:
-        logger.warning(f"No data extracted from {url}")
+        # JSON failed or found no runners — full HTML parse (includes ratings)
+        df = _parse_race_from_html(soup, url)
+        if df.empty:
+            logger.warning(f"No data extracted from {url}")
+        return df
+
+    # JSON gave us runners; patch OR/TS/RPR (and other stats) from HTML
+    df = _patch_ratings_from_html(df, soup, url)
     return df
 
 
